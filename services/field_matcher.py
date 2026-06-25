@@ -337,6 +337,57 @@ def match_fields_to_positions(fields: list[dict], text_positions: list[dict]) ->
                 print(f"  [跳过] 表头字段: {label}")
                 continue
 
+        # 如果字段已有坐标（扫描件PDF），直接使用，跳过文字匹配
+        if all(k in field for k in ["x", "y", "w", "h"]):
+            x_val = field.get("x", 0)
+            y_val = field.get("y", 0)
+            w_val = field.get("w", 0)
+            h_val = field.get("h", 0)
+            
+            # 获取PDF页面尺寸（优先使用字段中携带的尺寸信息）
+            page_width = field.get("pdf_width", PAGE_WIDTH)
+            page_height = field.get("pdf_height", 800)
+            
+            # 如果字段中没有尺寸信息，尝试从text_positions获取
+            if not field.get("pdf_width"):
+                for tp in text_positions:
+                    if tp.get("page") == field_page:
+                        page_width = max(page_width, tp.get("x1", 0) + 50)
+                        page_height = max(page_height, tp.get("y1", 0) + 50)
+                        break
+            
+            # 判断坐标类型：如果值>100认为是像素坐标，否则是百分比
+            if x_val > 100 or y_val > 100:
+                # 像素坐标，需要根据图片尺寸转换为PDF坐标
+                # 图片尺寸约 1200x848（横向A4，1.5倍DPI）
+                img_width = 1200
+                img_height = 848
+                actual_x = x_val * page_width / img_width
+                actual_y = y_val * page_height / img_height
+                actual_w = w_val * page_width / img_width
+                actual_h = h_val * page_height / img_height
+            else:
+                # 百分比坐标
+                actual_x = page_width * x_val / 100
+                actual_y = page_height * y_val / 100
+                actual_w = page_width * w_val / 100
+                actual_h = page_height * h_val / 100
+            
+            result.append({
+                "label": label,
+                "value": value,
+                "x": actual_x,
+                "y": actual_y,
+                "width": max(30, actual_w),
+                "height": max(12, actual_h),
+                "page": field_page,
+                "font_size": 8,
+                "matched_text": "AI坐标",
+                "match_score": 100,
+            })
+            print(f"  [AI坐标] {label}: x={actual_x:.0f}, y={actual_y:.0f}, w={actual_w:.0f}, h={actual_h:.0f} (pdf={page_width:.0f}x{page_height:.0f})")
+            continue
+
         label_norm = _normalize_text(label)
 
         # ═══ 通用表格字段匹配 ═══

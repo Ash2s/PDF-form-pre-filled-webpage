@@ -125,11 +125,24 @@ FORM_FIELD_PROMPT_TEMPLATE = """你是PDF表格分析专家。请观察这张表
 - 无法填写的字段value留空字符串""
 - **家庭表格的每个成员的每一行都必须返回，即使value为空**
 
+【坐标定位规则 - 重要】
+对于每个字段，你必须返回填写区域的坐标位置（用于扫描件PDF）：
+- **x**: 填写区域左上角的X坐标（占图片宽度的百分比，0-100）
+- **y**: 填写区域左上角的Y坐标（占图片高度的百分比，0-100）
+- **w**: 填写区域的宽度（占图片宽度的百分比，0-100）
+- **h**: 填写区域的高度（占图片高度的百分比，0-100）
+
+坐标估算方法：
+1. 找到字段标签（如"姓名:"）的位置
+2. 找到标签右侧或下方的空白填写区域
+3. 估算该空白区域在图片中的百分比坐标
+4. 例如：标签在图片左侧约5%位置，空白区域从8%开始到30%，高度从20%到23%，则 x=8, y=20, w=22, h=3
+
 【输出格式】
 直接返回JSON对象，包含fields数组和activities数组：
 {{
   "fields": [
-    {{"label": "实际PDF上的标签文字", "value": "填写内容"}}
+    {{"label": "实际PDF上的标签文字", "value": "填写内容", "x": 8, "y": 20, "w": 22, "h": 3}}
   ],
   "activities": [
     {{"year": "年份", "activity": "活动名称", "organizer": "主办机构", "award": "荣誉（可选）"}}
@@ -141,6 +154,7 @@ FORM_FIELD_PROMPT_TEMPLATE = """你是PDF表格分析专家。请观察这张表
 - 如果学生资料中有"申请原因"但PDF上没有这个填写栏位，不要返回它
 - 如果学生资料中有课外活动但PDF上没有活动表格，activities返回空数组[]
 - 输出示例中的字段名仅为格式参考，不要照抄。必须用PDF上实际出现的文字作为label
+- **每个字段必须包含x, y, w, h坐标值，否则无法在扫描件PDF上填写**
 """
 
 
@@ -201,7 +215,16 @@ def detect_form_fields(image_base64: str, student_info: dict = None) -> tuple[li
         label = item.get("label") or item.get("Label") or item.get("name") or ""
         value = item.get("value") or item.get("Value") or ""
         if label:
-            cleaned.append({"label": str(label).strip(), "value": str(value).strip()})
+            field = {"label": str(label).strip(), "value": str(value).strip()}
+            # 提取坐标（扫描件PDF使用）
+            for key in ["x", "y", "w", "h"]:
+                val = item.get(key)
+                if val is not None:
+                    try:
+                        field[key] = float(val)
+                    except (ValueError, TypeError):
+                        pass
+            cleaned.append(field)
 
     print(f"  [DF] step5: cleaned {len(cleaned)} fields, {len(activities)} activities")
 

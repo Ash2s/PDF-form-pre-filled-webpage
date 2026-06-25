@@ -62,7 +62,7 @@ def _get_form(session, form_index=0):
 @app.post("/api/upload-student")
 async def upload_student(file: UploadFile = File(...)):
     ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in [".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg"]:
+    if ext not in [".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".txt"]:
         raise HTTPException(400, "不支持的文件格式")
 
     session_id = str(uuid.uuid4())[:8]
@@ -104,6 +104,17 @@ async def upload_student(file: UploadFile = File(...)):
         from services.extractor import STUDENT_EXTRACT_PROMPT
         from services.mimo import analyze_text
         prompt = f"{STUDENT_EXTRACT_PROMPT}\n\n以下是学生文档内容：\n{text[:3000]}"
+        result = analyze_text(prompt)
+        info = _extract_json(result)
+        _calc_age(info)
+    elif ext == ".txt":
+        with open(file_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        if not text.strip():
+            raise HTTPException(400, "TXT文件内容为空")
+        from services.extractor import STUDENT_EXTRACT_PROMPT
+        from services.mimo import analyze_text
+        prompt = f"{STUDENT_EXTRACT_PROMPT}\n\n以下是学生资料文本内容：\n{text[:3000]}"
         result = analyze_text(prompt)
         info = _extract_json(result)
         _calc_age(info)
@@ -162,6 +173,9 @@ async def upload_form(
             fields, img_activities = detect_form_fields(img_data["base64"], student_info=student)
             for f in fields:
                 f["page"] = page_num
+                # 传递PDF页面尺寸信息用于坐标转换
+                f["pdf_width"] = img_data.get("pdf_width", 595)
+                f["pdf_height"] = img_data.get("pdf_height", 842)
                 if not f.get("value"):
                     f["_skip"] = False
             all_ai_fields.extend([f for f in fields if not f.get("_skip")])

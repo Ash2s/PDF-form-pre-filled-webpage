@@ -78,7 +78,7 @@ def extract_text_with_positions(pdf_path: str) -> list[dict]:
 
 def add_form_fields(input_pdf: str, output_pdf: str, fields: list[dict],
                      text_positions: list[dict] = None) -> str:
-    """在PDF上添加可编辑表单域"""
+    """在PDF上添加填写内容（AI坐标字段用insert_htmlbox，文字匹配字段用widget）"""
     import tempfile
     import shutil
 
@@ -107,6 +107,8 @@ def add_form_fields(input_pdf: str, output_pdf: str, fields: list[dict],
             print(f"  [跳过] 超出页面: {field.get('label','')} x={x:.0f} y={y:.0f} w={w:.0f} h={h:.0f} page={page_rect.width:.0f}x{page_rect.height:.0f}")
             continue
 
+        is_ai_coord = field.get("matched_text") == "AI坐标"
+
         MAX_FONT_SIZE = 12
         preset_font_size = field.get("font_size")
         if preset_font_size:
@@ -122,28 +124,78 @@ def add_form_fields(input_pdf: str, output_pdf: str, fields: list[dict],
                 font_size = max_font_size
             font_size = min(font_size, MAX_FONT_SIZE)
 
-        widget = fitz.Widget()
-        widget.field_name = field.get("label", f"f{page_num}_{int(x)}_{int(y)}")
-        widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
-        widget.field_value = value
-        widget.field_flags = 0
+        if is_ai_coord:
+            # 扫描件PDF：用widget写文字，可编辑
+            # 先移除页面旋转，写入后再恢复
+            rotation = page.rotation
+            if rotation != 0:
+                page.set_rotation(0)
+                # 旋转移除后页面尺寸变化，需要转换坐标
+                # 原始横向(842x595) → 纵向(595x842)
+                # 原始(x,y) → 纵向(y, 842-x-width)
+                old_w = 842  # 横向宽度
+                old_h = 595  # 横向高度
+                new_x = y
+                new_y = old_w - x - w
+                new_w = h
+                new_h = w
+                x, y, w, h = new_x, new_y, new_w, new_h
+                page_rect = page.rect
+            
+            try:
+                widget = fitz.Widget()
+                widget.field_name = field.get("label", f"f{page_num}_{int(x)}_{int(y)}")
+                widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+                widget.field_value = value
+                widget.field_flags = 0
 
-        if len(value) > 40 or '\n' in value:
-            widget.field_flags = 1 << 12
-            estimated_lines = max(2, len(value) // 50 + 1)
-            h = max(h, estimated_lines * (font_size + 2))
-        widget.rect = fitz.Rect(x, y, x + w, y + h)
-        widget.text_fontsize = font_size
-        widget.text_color = (0, 0, 0)
-        widget.fill_color = None
-        widget.border_color = None
-        widget.border_width = 0
-        widget.border_style = "none"
-        try:
-            page.add_widget(widget)
-        except ValueError as e:
-            print(f"  [错误] 添加widget失败: {field.get('label','')} rect=({x:.0f},{y:.0f},{x+w:.0f},{y+h:.0f}) error={e}")
-            continue
+                if len(value) > 40 or '\n' in value:
+                    widget.field_flags = 1 << 12
+                    estimated_lines = max(2, len(value) // 50 + 1)
+                    h = max(h, estimated_lines * (font_size + 2))
+                widget.rect = fitz.Rect(x, y, x + w, y + h)
+                widget.text_fontsize = font_size
+                widget.text_color = (0, 0, 0)
+                widget.fill_color = None
+                widget.border_color = None
+                widget.border_width = 0
+                widget.border_style = "none"
+                page.add_widget(widget)
+                print(f"  [写入] {field.get('label','')}: ({x:.0f},{y:.0f}) size={font_size:.1f}")
+            except Exception as e:
+                print(f"  [错误] 添加widget失败: {field.get('label','')} error={e}")
+            
+            # 恢复页面旋转
+            if rotation != 0:
+                page.set_rotation(rotation)
+        else:
+            # 有文字坐标的PDF：用widget保持可编辑
+            widget = fitz.Widget()
+            widget.field_name = field.get("label", f"f{page_num}_{int(x)}_{int(y)}")
+            widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+            widget.field_value = value
+            widget.field_flags = 0
+
+            if len(value) > 40 or '\n' in value:
+                widget.field_flags = 1 << 12
+                estimated_lines = max(2, len(value) // 50 + 1)
+                h = max(h, estimated_lines * (font_size + 2))
+            widget.rect = fitz.Rect(x, y, x + w, y + h)
+            widget.text_fontsize = font_size
+            widget.text_color = (0, 0, 0)
+            widget.fill_color = None
+            widget.border_color = None
+            widget.border_width = 0
+            widget.border_style = "none"
+            try:
+                page.add_widget(widget)
+            except ValueError as e:
+                print(f"  [错误] 添加widget失败: {field.get('label','')} rect=({x:.0f},{y:.0f},{x+w:.0f},{y+h:.0f}) error={e}")
+                continue
+
+        # 恢复页面旋转
+        if rotation != 0 and is_ai_coord:
+            page.set_rotation(rotation)
 
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf", dir=os.path.dirname(output_pdf))
     os.close(tmp_fd)

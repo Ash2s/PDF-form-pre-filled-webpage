@@ -18,7 +18,7 @@ function setupDropZone(zoneId, listId, onFile) {
     });
     zone.addEventListener('click', () => {
         const input = document.createElement('input');
-        input.type = 'file'; input.accept = '.pdf,.doc,.docx,.png,.jpg,.jpeg'; input.multiple = true;
+        input.type = 'file';         input.accept = '.pdf,.doc,.docx,.png,.jpg,.jpeg,.txt'; input.multiple = true;
         input.onchange = () => Array.from(input.files).forEach(f => { addFile(list, f); onFile(f); });
         input.click();
     });
